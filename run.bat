@@ -90,7 +90,7 @@ schtasks /Create ^
 
 if %ERRORLEVEL% equ 0 (
     echo The startup task has been successfully created and will be executed immediately for the first time.
-    "%PYTHON_EXE_PATH%" "%PROJECT_DIR%\watcher.py" --repo "%REPO_PATH%"
+    call  "%PROJECT_DIR%\run_watcher.bat"
 ) else (
     echo The task schedule creation failed, error code:%ERRORLEVEL%
 )

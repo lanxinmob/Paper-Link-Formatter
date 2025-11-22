@@ -3,6 +3,8 @@ import re
 import requests
 import os
 import argparse
+import xml.etree.ElementTree as ET  
+import urllib.request
 
 def find_modified_markdown_files(repo_path='.'):
     """在 Git 仓库中查找被修改过的 Markdown 文件。"""
@@ -54,7 +56,7 @@ def download_papers_from_file(filepath):
 def get_paper_metadata(arxiv_id,pdf_path):
     """使用 Semantic Scholar Graph API 查询论文元数据。"""
     headers = {'User-Agent': 'MyNotesProcessor/1.0'}
-    fields = 'title,authors,citationCount,url'
+    fields = 'title,authors,citationCount,url,publicationDate'
     api_url = f'https://api.semanticscholar.org/graph/v1/paper/arXiv:{arxiv_id}?fields={fields}'
 
     try:
@@ -66,20 +68,57 @@ def get_paper_metadata(arxiv_id,pdf_path):
         authors = ', '.join([author['name'] for author in data.get('authors', [])])
         citations = data.get('citationCount', 0)
         url = data.get('url', '')
+        date = data.get('publicationDate', 'N/A')
 
         return {
             'title': title,
             'authors': authors,
             'citations': citations,
             'url': url,
+            'date': date,
             'pdf_path': pdf_path
         }
 
     except requests.exceptions.RequestException as e:
         print(f"API 请求失败: {e}")
+        return get_metadata_from_arxiv_official(arxiv_id, pdf_path)
+
+def get_metadata_from_arxiv_official(arxiv_id, pdf_path):
+    """直接从 ArXiv 官方 API 获取元数据（支持最新论文），但没有引用数"""
+    print(f" -> [备用] 正在尝试从 ArXiv 官方 API 获取: {arxiv_id}...")
+    api_url = f'http://export.arxiv.org/api/query?id_list={arxiv_id}'
+    
+    try:
+        with urllib.request.urlopen(api_url) as url:
+            data = url.read()
+        
+        root = ET.fromstring(data)
+        # ArXiv API 返回的是 Atom XML 格式
+        namespace = {'atom': 'http://www.w3.org/2005/Atom'}
+        entry = root.find('atom:entry', namespace)
+        
+        if entry is None:
+            return None
+
+        title = entry.find('atom:title', namespace).text.strip().replace('\n', ' ')
+        published_raw = entry.find('atom:published', namespace).text
+        published_date = published_raw[:10]
+        authors_list = [author.find('atom:name', namespace).text for author in entry.findall('atom:author', namespace)]
+        authors = ', '.join(authors_list)
+        url = entry.find('atom:id', namespace).text
+        
+        return {
+            'title': title,
+            'authors': authors,
+            'date': published_date,
+            'citations': 'N/A',
+            'url': url,
+            'pdf_path': pdf_path
+        }
+    except Exception as e:
+        print(f" -> 备用失败 ArXiv API 请求失败: {e}")
         return None
-
-
+    
 def format_and_process_links_in_file(filepath,download=False):
     """
     读取一个 Markdown 文件，查找 arXiv 链接，
@@ -105,9 +144,10 @@ def format_and_process_links_in_file(filepath,download=False):
             metadata = get_paper_metadata(arxiv_id,pdf_path)
             if metadata:
                 original_url = f"https://arxiv.org/abs/{arxiv_id}"
-                formatted_link = "[{title} - {authors}]({url}) (Citations: {citations}) [PDF]({pdf_path})".format(
+                formatted_link = "[{title} - {authors}({date})]({url}) (Citations: {citations}) [PDF]({pdf_path})".format(
                     title=metadata['title'],
                     authors=metadata['authors'],
+                    date=metadata.get('date', 'N/A'),
                     url=metadata['url'],
                     citations=metadata['citations'],
                     pdf_path =metadata['pdf_path']
